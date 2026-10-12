@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>URL Shortener</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --card: #ffffff; --text: #16181d; --muted: #606776;
+      --border: #dde1e7; --accent: #2f5bea; --accent-text: #ffffff;
+      --ok-bg: #eaf6ee; --ok-border: #9ed3ae; --err-bg: #fdeeee; --err-border: #eba5a5;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111317; --card: #1a1d23; --text: #eceef2; --muted: #9aa1ae;
+        --border: #2c313a; --accent: #6b8cff; --accent-text: #0d0f13;
+        --ok-bg: #16281d; --ok-border: #2f6a42; --err-bg: #2c1717; --err-border: #7a3434;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      display: flex; align-items: flex-start; justify-content: center; padding: 10vh 16px 32px;
+    }
+    main { width: 100%; max-width: 620px; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+    p.lead { margin: 0 0 24px; color: var(--muted); }
+    form { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 10px 12px; font: inherit; color: var(--text); background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+    @media (max-width: 520px) { .row { grid-template-columns: 1fr; } }
+    button {
+      font: inherit; font-weight: 600; cursor: pointer; border: 0; border-radius: 8px;
+      padding: 10px 16px; background: var(--accent); color: var(--accent-text);
+    }
+    button:disabled { opacity: .6; cursor: progress; }
+    .submit { margin-top: 18px; width: 100%; }
+    .result {
+      margin-top: 16px; padding: 14px 16px; border-radius: 10px; border: 1px solid; display: none;
+      word-break: break-all;
+    }
+    .result.ok { display: block; background: var(--ok-bg); border-color: var(--ok-border); }
+    .result.err { display: block; background: var(--err-bg); border-color: var(--err-border); }
+    .short { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+    .short a { color: var(--text); font-weight: 600; font-size: 1.1rem; }
+    .short button { padding: 6px 12px; flex-shrink: 0; }
+    .meta { color: var(--muted); font-size: .85rem; margin-top: 6px; }
+    footer { margin-top: 20px; color: var(--muted); font-size: .85rem; }
+    footer a { color: inherit; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>URL Shortener</h1>
+  <p class="lead">Paste a long link and get a short one.</p>
+
+  <form id="form">
+    <label for="longUrl">Long URL</label>
+    <input id="longUrl" type="url" required placeholder="https://example.com/a/very/long/path?with=query">
+    <div class="row">
+      <div>
+        <label for="alias">Custom alias (optional)</label>
+        <input id="alias" pattern="[A-Za-z0-9_\-]{3,32}" placeholder="my-link">
+      </div>
+      <div>
+        <label for="expires">Expires (optional)</label>
+        <input id="expires" type="datetime-local">
+      </div>
+    </div>
+    <button class="submit" type="submit">Shorten</button>
+  </form>
+
+  <div id="result" class="result" role="status" aria-live="polite"></div>
+
+  <footer>API docs: <a href="/docs">/docs</a> · Health: <a href="/healthz">/healthz</a></footer>
+</main>
+
+<script>
+  const form = document.getElementById("form");
+  const result = document.getElementById("result");
+  const button = form.querySelector("button");
+
+  function show(kind, html) {
+    result.className = "result " + kind;
+    result.innerHTML = html;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+  }
+
+  function errorMessage(body, status) {
+    if (!body || !body.detail) return "Request failed (" + status + ")";
+    if (typeof body.detail === "string") return body.detail;
+    return body.detail.map(d => d.msg).join("; ");
+  }
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = { longUrl: document.getElementById("longUrl").value.trim() };
+    const alias = document.getElementById("alias").value.trim();
+    const expires = document.getElementById("expires").value;
+    if (alias) payload.customAlias = alias;
+    if (expires) payload.expiresAt = new Date(expires).toISOString();
+
+    button.disabled = true;
+    try {
+      const res = await fetch("/api/v1/data/shorten", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        show("err", escapeHtml(errorMessage(body, res.status)));
+        return;
+      }
+      const reused = res.status === 200 ? " · already shortened, existing link returned" : "";
+      const expiry = body.expiresAt ? " · expires " + new Date(body.expiresAt).toLocaleString() : "";
+      show("ok",
+        '<div class="short"><a href="' + escapeHtml(body.shortUrl) + '" target="_blank" rel="noopener">' +
+        escapeHtml(body.shortUrl) + '</a><button type="button" id="copy">Copy</button></div>' +
+        '<div class="meta">' + escapeHtml(body.longUrl) + escapeHtml(reused + expiry) + "</div>");
+      document.getElementById("copy").addEventListener("click", async (e) => {
+        try {
+          await navigator.clipboard.writeText(body.shortUrl);
+          e.target.textContent = "Copied";
+        } catch {
+          e.target.textContent = "Copy failed";
+        }
+      });
+    } catch (err) {
+      show("err", "Network error: " + escapeHtml(err.message));
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+[project]
+name = "url-shortener"
+version = "1.0.0"
+description = "URL shortener from System Design Interview (Alex Xu), chapter 8"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
